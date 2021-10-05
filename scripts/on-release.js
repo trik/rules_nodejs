@@ -9,6 +9,8 @@ const version = require('../package.json').version;
 const artifact = 'dist/bin/release.tar.gz';
 const coreArtifact = 'dist/bin/release-core.tar.gz';
 
+const bazelBinary = path.posix.join(__dirname, '../node_modules/.bin/bazel');
+
 function computeSha256(path) {
   const hash = crypto.createHash('sha256');
   // TODO(alexeagle): consider streaming the bytes into the hash function, if this consumes too much
@@ -69,3 +71,40 @@ for (const f of workspaceFiles) {
   workspaceContents = workspaceContents.replace(coreRegex, coreReplacement);
   fs.writeFileSync(f, workspaceContents);
 }
+
+function getBazelArtifactPath(buildInfo, pathFragmentId) {
+  let artifactPath = [];
+  let fragment = buildInfo.pathFragments.find(p => p.id === pathFragmentId);
+  while (fragment.parentId !== undefined) {
+    artifactPath = [fragment.label, ...artifactPath];
+    fragment = buildInfo.pathFragments.find(p => p.id === fragment.parentId);
+  }
+  return path.posix.join('bazel-out', ...artifactPath);
+}
+
+function getDevserverBinarySha(binary) {
+  shell.exec(`${bazelBinary} build ${binary}`, {silent: true});
+  const cQuery = `${bazelBinary} cquery ${binary} --output=jsonproto`;
+  const ruleInfo = JSON.parse(shell.exec(cQuery, {silent: true}));
+  const attributes = ruleInfo.results[0].target.rule.attribute;
+  const os = attributes.find(a => a.name === 'goos').stringValue.toLocaleUpperCase();
+  const arch = attributes.find(a => a.name === 'goarch').stringValue.toLocaleUpperCase();
+  const aQuery = `${bazelBinary} aquery ${binary} --output=jsonproto`;
+  const buildInfo = JSON.parse(shell.exec(aQuery, {silent: true}));
+  const outputId = buildInfo.actions.find(a => a.mnemonic === 'GoLink').primaryOutputId;
+  const artifact = buildInfo.artifacts.find(a => a.id === outputId);
+  const binaryPath = getBazelArtifactPath(buildInfo, artifact.pathFragmentId);
+  const sha = computeSha256(binaryPath);
+  const constantName = `_${os}_${arch}_SHA`;
+  return {sha, constantName};
+}
+
+const bazelQuery = `${bazelBinary} query "kind(go_transition_binary, @build_bazel_rules_typescript//devserver:*)"`;
+const concatjsBinaries = shell.exec(bazelQuery, {silent: true}).split('\n').filter(b => b.trim().length > 0);
+const repositoriesPath = 'toolchains/concatjs/repositories.bzl';
+let repositories = fs.readFileSync(repositoriesPath, 'utf8');
+for (const binary of concatjsBinaries) {
+  const {sha, constantName} = getDevserverBinarySha(binary);
+  repositories = repositories.replace(new RegExp(`${constantName} = "[a-f0-9]+"`, 'gm'), `${constantName} = "${sha}"`);
+}
+fs.writeFileSync(repositoriesPath, repositories);

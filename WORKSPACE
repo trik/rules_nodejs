@@ -123,7 +123,7 @@ load("@io_bazel_rules_webtesting//web:repositories.bzl", "web_test_repositories"
 
 web_test_repositories()
 
-load("@io_bazel_rules_webtesting//web/versioned:browsers-0.3.2.bzl", "browser_repositories")
+load("@io_bazel_rules_webtesting//web/versioned:browsers-0.3.3.bzl", "browser_repositories")
 
 browser_repositories(
     chromium = True,
@@ -134,6 +134,11 @@ browser_repositories(
 load("//toolchains/esbuild:esbuild_repositories.bzl", "esbuild_repositories")
 
 esbuild_repositories()
+
+# Setup concatjs dependencies
+load("//toolchains/concatjs:concatjs_repositories.bzl", "concatjs_repositories")
+
+concatjs_repositories()
 
 #
 # Dependencies to run stardoc & generating documentation
